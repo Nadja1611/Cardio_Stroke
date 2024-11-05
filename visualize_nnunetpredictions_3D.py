@@ -1,11 +1,17 @@
 import nibabel as nib
 import numpy as np
 import os
+import matplotlib.pyplot as plt
 
 # Define paths for predictions and inputs
 prediction_path = '/Users/nadjagruber/Documents/Stroke_Kardio/predictions_nnunet3d'
 input_path = '/Users/nadjagruber/Documents/Stroke_Kardio/ADS_data_selected'
-output_nii_path = '/Users/nadjagruber/Documents/Stroke_Kardio/combined_nii_files'
+output_nii_path = '/Users/nadjagruber/Documents/Stroke_Kardio/combined_overlay_nii_files'
+output_plot_path = '/Users/nadjagruber/Documents/Stroke_Kardio/plots'  # Folder to save plots
+
+# Create output directories if they do not exist
+os.makedirs(output_nii_path, exist_ok=True)
+os.makedirs(output_plot_path, exist_ok=True)
 
 # Get list of prediction files and filter only NIfTI files
 list_pred = sorted(os.listdir(prediction_path))
@@ -26,10 +32,6 @@ for pred_file in filtered_list:
     if matching_dwi_file in inp_list:
         dwi_files.append(matching_dwi_file)
 
-# Verify matching lists length
-if len(filtered_list) != len(dwi_files):
-    print("Warning: The number of DWIs does not match the predictions.")
-
 # Loop over matched DWI and prediction files
 for i in range(len(dwi_files)):
     # Load DWI and prediction data
@@ -48,30 +50,39 @@ for i in range(len(dwi_files)):
     dwi_normalized = (dwi_data - np.min(dwi_data)) / (np.max(dwi_data) - np.min(dwi_data)) * 255
     dwi_normalized = dwi_normalized.astype(np.uint8)
 
-    # Create a red overlay with transparency
-    overlay = np.zeros((*dwi_normalized.shape, 3), dtype=np.uint8)  # Create RGB image
-    red_channel_value = 255  # Full intensity for red channel
+    # Create a red overlay
+    overlay = np.zeros((*dwi_normalized.shape, 3), dtype=np.uint8)  # Create a 3D RGB array
+    overlay[prediction_data > 0] = [255, 0, 0]  # Set overlay to red where prediction is non-zero
 
-    # Apply the red color to the overlay where segmentation exists
-    overlay[prediction_data > 0, 0] = red_channel_value  # Red channel
-    overlay[prediction_data > 0, 1] = 0                # Green channel
-    overlay[prediction_data > 0, 2] = 0                # Blue channel
+    # Blend the DWI and overlay with transparency
+    alpha = 0.5  # Set alpha for transparency (0: fully transparent, 1: fully opaque)
+    combined_rgb = np.clip(dwi_normalized[..., np.newaxis] + overlay * alpha, 0, 255).astype(np.uint8)
 
-    # Convert DWI data to RGB
-    dwi_rgb = np.stack((dwi_normalized,) * 3, axis=-1)  # Create an RGB version of the DWI
-
-    # Combine DWI and overlay: blend the DWI with the overlay
-    alpha = 0.1  # Adjust the alpha for transparency
-    combined_data = (1 - alpha) * dwi_rgb + alpha * overlay
-
-    # Clip to ensure values remain within valid range [0, 255]
-    combined_data = np.clip(combined_data, 0, 255).astype(np.uint8)
-
-    # Create a new NIfTI image with the same affine and header as the DWI
-    combined_img = nib.Nifti1Image(combined_data, affine=dwi_img.affine, header=dwi_img.header)
+    # Create a new NIfTI image with the combined RGB data
+    combined_img = nib.Nifti1Image(combined_rgb, affine=dwi_img.affine, header=dwi_img.header)
 
     # Save the combined NIfTI file
     combined_nii_save_path = os.path.join(output_nii_path, f'combined_overlay_{dwi_files[i]}')
     nib.save(combined_img, combined_nii_save_path)
-    
+
+    # Plotting the images
+    slice_index = 15  # You can change this to visualize a different slice
+    plt.figure(figsize=(10, 5))
+
+    # Plot the DWI image
+    plt.subplot(1, 2, 1)
+    plt.imshow(dwi_normalized[:, :, slice_index], cmap='gray')
+    plt.title('DWI Image')
+    plt.axis('off')
+
+    # Plot the overlay
+    plt.subplot(1, 2, 2)
+    plt.imshow(combined_rgb[:, :, slice_index])
+    plt.title('DWI with Segmentation Overlay')
+    plt.axis('off')
+
+    # Save the plot
+    plt.savefig(os.path.join(output_plot_path, f'combined_overlay_plot_{dwi_files[i][:-7]}.png'))
+    plt.close()
+
     print(f"Saved combined overlay NIfTI for {dwi_files[i]} and {filtered_list[i]} at {combined_nii_save_path}")
